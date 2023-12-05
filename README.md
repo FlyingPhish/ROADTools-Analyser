@@ -8,6 +8,11 @@ A smol Python script that takes two user arguments -db (file path of ROADtools d
 - Overall stats for previous bullet points (including numbers and percentages)
 - Table of password ages (in years) and number of accounts per age.
 
+![image](https://github.com/FlyingPhish/ROADTools-Analyser/assets/46652779/8c0e2af8-d252-463a-a97d-603f02fc6fbf)
+![image](https://github.com/FlyingPhish/ROADTools-Analyser/assets/46652779/ad6a26bd-8a4b-4db8-b803-fe0a99d9088c)
+
+
+
 Once completed, the script will output an XLSX spreadsheet with named tabs per query.
 
 ## Usage
