@@ -38,6 +38,26 @@ def save_to_excel(dataframes, file_name):
         for sheet_name, df in dataframes.items():
             df.to_excel(writer, sheet_name=sheet_name, index=False)
 
+def print_summary_stats(stats_df):
+    """Print a summary of key statistics to the console."""
+    stats = stats_df.iloc[0]  # Get the first (and only) row of the DataFrame
+    
+    print("\nGeneral Statistics:")
+    print(f"* Total Users: {stats['Total Users']}")
+    print(f"* Total Member Users: {stats['Total Member Users']}")
+    print(f"* Total Active Users: {stats['Total Active Users']}")
+    print(f"* Total Guests: {stats['Total Guests']}")
+    print(f"* Total Active Guest Users: {stats['Total Active Guests']}")
+    print(f"* Total Users w/ Disable Password Expiry: {stats['Users w/ Disable Password Expiry']}")
+    
+    print("\nPassword statistics for active users:")
+    print(f"* {stats['Percentage Users w/ Disable Password Expiry']:.1f}% of users have the password policy 'Disable Password Expiration' attached.")
+    print(f"* {stats['Percentage of Members Password > 90 Days']:.1f}% of member users have passwords over 90 days old.")
+    print(f"* {stats['Percentage of Guests Password > 90 Days']:.1f}% of guest users have passwords over 90 days old.")
+    print(f"* {stats['Percentage of Members w/ Unchanged Passwords From Creation']:.1f}% of members have not changed their password since creation.")
+    print(f"* {stats['Percentage of Guests w/ Unchanged Passwords From Creation']:.1f}% of guest users have not changed their password since creation.")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run SQLite queries and export results to Excel.")
     parser.add_argument("-db", "--database", required=True, help="Path to the SQLite database file.")
@@ -176,4 +196,5 @@ if __name__ == "__main__":
     if conn:
         results = {name: run_query(conn, query) for name, query in queries.items()}
         save_to_excel(results, output_file)
+        print_summary_stats(results['OverallStats'])
         conn.close()
