@@ -1,7 +1,13 @@
 import os
 import sqlite3
 import pandas as pd
+import openpyxl
 import argparse
+import json
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Alignment
+from utils.user_queries import USER_QUERIES
+from utils.tenant_queries import TENANT_QUERIES
 
 def print_banner():
     ascii_art = """
@@ -16,7 +22,6 @@ def print_banner():
 ░        ░ ░       ░  ░  ░               ░ ░     ░ ░     ░  ░     ░           ░  ░        ░      ░  ░   ░  ░ ░          ░  ░       ░  
 By @FlyingPhishy
 """
-
     print(ascii_art)
 
 def connect_to_db(db_file):
@@ -33,10 +38,70 @@ def run_query(conn, query):
         print(f"Error running query: {e}")
         return pd.DataFrame()
 
+def is_json_string(x):
+    if not isinstance(x, str):
+        return False
+    x = x.strip()
+    return (x.startswith('{') and x.endswith('}')) or (x.startswith('[') and x.endswith(']'))
+
+def format_json(value):
+    try:
+        # Parse the JSON string
+        parsed = json.loads(value)
+        # Format it with indentation
+        return json.dumps(parsed, indent=2)
+    except json.JSONDecodeError:
+        # If it's not valid JSON, return the original value
+        return value
+
 def save_to_excel(dataframes, file_name):
-    with pd.ExcelWriter(file_name) as writer:
+    with pd.ExcelWriter(file_name, engine='openpyxl') as writer:
         for sheet_name, df in dataframes.items():
+            # Ensure the DataFrame has at least one row (for headers)
+            if df.empty:
+                df = pd.DataFrame(columns=df.columns)
+                df.loc[0] = [''] * len(df.columns)  # Add an empty row
+            
+            # Identify columns that contain JSON
+            json_columns = df.columns[df.apply(lambda col: col.map(is_json_string).any())]
+            
+            # Format JSON in identified columns
+            for col in json_columns:
+                df[col] = df[col].map(format_json)
+            
+            # Write the dataframe to Excel
             df.to_excel(writer, sheet_name=sheet_name, index=False)
+            
+            # Get the worksheet
+            worksheet = writer.sheets[sheet_name]
+            
+            for idx, col in enumerate(df.columns):
+                column_letter = get_column_letter(idx + 1)
+                
+                # Set a reasonable maximum width
+                max_width = 100
+                
+                if col in json_columns:
+                    # For JSON columns, set a fixed width and wrap text
+                    worksheet.column_dimensions[column_letter].width = max_width
+                    for cell in worksheet[column_letter]:
+                        cell.alignment = Alignment(wrap_text=True, vertical='center')
+                else:
+                    # For other columns, auto-fit width
+                    max_length = max(df[col].astype(str).map(len).max(), len(str(col)))
+                    adjusted_width = min(max_length + 2, max_width)  # +2 for some padding
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
+
+            # Freeze the header row
+            worksheet.freeze_panes = 'A2'
+            
+            # If the DataFrame was originally empty, remove the empty data row
+            if df.shape[0] == 1 and all(df.iloc[0].isna()):
+                for row in worksheet['A2:' + get_column_letter(worksheet.max_column) + '2']:
+                    for cell in row:
+                        cell.value = None
+
+    print(f"Excel file saved: {file_name}")
 
 def print_summary_stats(stats_df):
     """Print a summary of key statistics to the console."""
@@ -57,7 +122,6 @@ def print_summary_stats(stats_df):
     print(f"* {stats['Percentage of Members w/ Unchanged Passwords From Creation']:.1f}% of members have not changed their password since creation.")
     print(f"* {stats['Percentage of Guests w/ Unchanged Passwords From Creation']:.1f}% of guest users have not changed their password since creation.")
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run SQLite queries and export results to Excel.")
     parser.add_argument("-db", "--database", required=True, help="Path to the SQLite database file.")
@@ -67,134 +131,33 @@ if __name__ == "__main__":
     print_banner()
 
     if not os.path.exists(args.database):
-        print(f"The specified database file does not exist: {args.db_file}")
+        print(f"The specified database file does not exist: {args.database}")
         exit()
 
     database_file = args.database
     output_file = args.output
 
-    queries = {
-        "GroupedByPassAge": """
-            SELECT 
-                CAST((julianday(date('now')) - julianday(date(lastPasswordChangeDateTime))) / 365 AS INTEGER) AS 'YearsSincePasswordChange',
-                COUNT(*) AS 'NumberOfUsers'
-            FROM Users
-            WHERE accountEnabled = '1'
-            GROUP BY YearsSincePasswordChange
-            ORDER BY YearsSincePasswordChange DESC;
-        """,
-
-        "OverallStats": """
-            SELECT 
-                (SELECT COUNT(*) FROM Users) AS 'Total Users',
-                (SELECT COUNT(*) FROM Users WHERE userType = 'Member') AS 'Total Member Users',
-                (SELECT COUNT(*) FROM Users WHERE userType = 'Guest') AS 'Total Guest Users',
-                (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = "Member") AS 'Total Active Users',
-                (SELECT COUNT(*) FROM Users WHERE userType = 'Guest') AS 'Total Guests',
-                (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Guest') AS 'Total Active Guests',
-                (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Member' AND julianday(date('now')) - julianday(date(lastPasswordChangeDateTime)) > 90) AS 'Member Users Password > 90 Days',
-                (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Guest' AND julianday(date('now')) - julianday(date(lastPasswordChangeDateTime)) > 90) AS 'Guest Users Password > 90 Days',
-                (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Member' AND date(createdDateTime) = date(lastPasswordChangeDateTime)) AS 'Unchanged Member Passwords From Creation',
-                (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Guest' AND date(createdDateTime) = date(lastPasswordChangeDateTime)) AS 'Unchanged Guest Passwords From Creation',
-                (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND passwordPolicies = 'DisablePasswordExpiration') AS 'Users w/ Disable Password Expiry',
-                -- Stats
-                100.0 * (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND passwordPolicies = 'DisablePasswordExpiration') / (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1') AS 'Percentage Users w/ Disable Password Expiry',
-                100.0 * (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Member' AND julianday(date('now')) - julianday(date(lastPasswordChangeDateTime)) > 90) / (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Member') AS 'Percentage of Members Password > 90 Days',
-                100.0 * (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Guest' AND julianday(date('now')) - julianday(date(lastPasswordChangeDateTime)) > 90) / (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Guest') AS 'Percentage of Guests Password > 90 Days',
-                100.0 * (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Member' AND date(createdDateTime) = date(lastPasswordChangeDateTime)) / (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Member') AS 'Percentage of Members w/ Unchanged Passwords From Creation',
-                100.0 * (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Guest' AND date(createdDateTime) = date(lastPasswordChangeDateTime)) / (SELECT COUNT(*) FROM Users WHERE accountEnabled = '1' AND userType = 'Guest') AS 'Percentage of Guests w/ Unchanged Passwords From Creation'
-                ;
-        """,
-
-        "OnPremGuests": """
-            SELECT 
-                userPrincipalName as UPN, 
-                displayName as Name, 
-                userType as UserType, 
-                dirSyncEnabled as SyncronisedToOnprem, 
-                strftime('%d/%m/%Y', lastDirSyncTime) as LastDirSync, 
-                strftime('%d/%m/%Y', lastPasswordChangeDateTime) as LastPassChange, 
-                strftime('%d/%m/%Y', onPremisesPasswordChangeTimestamp) as LastOnPremPassChange
-            FROM Users
-            WHERE userType = 'Guest' AND dirSyncEnabled = '1';
-        """,
-
-        "UnchangedPassGuests": """
-            SELECT 
-                userPrincipalName as UPN, 
-                displayName as Name, 
-                userType as UserType, 
-                strftime('%d/%m/%Y', createdDateTime) as CreatedDate, 
-                strftime('%d/%m/%Y', lastPasswordChangeDateTime) as LastPassChange,
-                CASE
-                        WHEN (julianday(date('now')) - julianday(date(createdDateTime))) < 30 THEN
-                            ROUND(julianday(date('now')) - julianday(date(createdDateTime))) || ' day(s)'
-                        WHEN (julianday(date('now')) - julianday(date(createdDateTime))) < 365 THEN
-                            ROUND((julianday(date('now')) - julianday(date(createdDateTime)))/30) || ' month(s)'
-                        ELSE
-                            ROUND((julianday(date('now')) - julianday(date(createdDateTime)))/365) || ' year(s)'
-                END AS accountAge,
-                ROUND(julianday(date('now')) - julianday(date(createdDateTime))) AS accountAgeInDays
-            FROM Users
-            WHERE userType = 'Guest' AND date(createdDateTime) = date(lastPasswordChangeDateTime) AND accountEnabled = '1'
-            ORDER BY accountAgeInDays DESC;
-        """,
-
-        "UnchangedPassUsers": """
-            SELECT 
-                userPrincipalName as UPN, 
-                displayName as Name, 
-                userType as UserType, 
-                strftime('%d/%m/%Y', createdDateTime) as CreatedDate, 
-                strftime('%d/%m/%Y', lastPasswordChangeDateTime) as LastPassChange,
-                strftime('%d/%m/%Y', onPremisesPasswordChangeTimestamp) as LastOnPremPassChange, 
-                CASE
-                        WHEN (julianday(date('now')) - julianday(date(createdDateTime))) < 30 THEN
-                            ROUND(julianday(date('now')) - julianday(date(createdDateTime))) || ' day(s)'
-                        WHEN (julianday(date('now')) - julianday(date(createdDateTime))) < 365 THEN
-                            ROUND((julianday(date('now')) - julianday(date(createdDateTime)))/30) || ' month(s)'
-                        ELSE
-                            ROUND((julianday(date('now')) - julianday(date(createdDateTime)))/365) || ' year(s)'
-                END AS accountAge,
-                ROUND(julianday(date('now')) - julianday(date(createdDateTime))) AS accountAgeInDays
-            FROM Users
-            WHERE date(createdDateTime) = date(lastPasswordChangeDateTime) AND accountEnabled = '1'
-            ORDER BY accountAgeInDays DESC;
-        """,
-
-        "UsersWPasswordExpiration": """
-            SELECT userPrincipalName as UPN, displayName as Name, userType as UserType, passwordPolicies, 
-                (SELECT COUNT(*) FROM Users WHERE passwordPolicies = 'DisablePasswordExpiration') AS countUsersWithPolicy
-            FROM Users
-            WHERE passwordPolicies = 'DisablePasswordExpiration' AND accountEnabled = '1';
-        """,
-
-        "AllDetails": """
-            SELECT 
-                userPrincipalName as UPN, 
-                displayName as Name, 
-                userType as UserType,
-                strftime('%d/%m/%Y', lastPasswordChangeDateTime) as LastPassChange,
-                strftime('%d/%m/%Y', onPremisesPasswordChangeTimestamp) as LastOnPremPassChange, 
-                CASE
-                        WHEN (julianday(date('now')) - julianday(date(lastPasswordChangeDateTime))) < 30 THEN
-                            CAST((julianday(date('now')) - julianday(date(lastPasswordChangeDateTime))) AS INTEGER) || ' day(s)'
-                        WHEN (julianday(date('now')) - julianday(date(lastPasswordChangeDateTime))) < 365 THEN
-                            CAST(((julianday(date('now')) - julianday(date(lastPasswordChangeDateTime)))/30) AS INTEGER) || ' month(s)'
-                        ELSE
-                            CAST(((julianday(date('now')) - julianday(date(lastPasswordChangeDateTime)))/365) AS INTEGER) || ' year(s)'
-                END AS PasswordAge,
-                CASE WHEN date(lastPasswordChangeDateTime) = date(createdDateTime) THEN 'True' ELSE 'False' END AS PasswordAgeEqualsCreationDate,
-                CAST((julianday(date('now')) - julianday(date(lastPasswordChangeDateTime))) AS INTEGER) AS PasswordAgeInDays
-            FROM Users
-            WHERE julianday(date('now')) - julianday(date(lastPasswordChangeDateTime)) > 90 AND accountEnabled = '1'
-            ORDER BY PasswordAgeInDays DESC;
-        """
-    }
-
     conn = connect_to_db(database_file)
     if conn:
-        results = {name: run_query(conn, query) for name, query in queries.items()}
-        save_to_excel(results, output_file)
-        print_summary_stats(results['OverallStats'])
+        user_results = {}
+        tenant_results = {}
+        
+        # Run user queries
+        for name, query in USER_QUERIES.items():
+            user_results[name] = run_query(conn, query)
+        
+        # Run tenant queries
+        for name, query in TENANT_QUERIES.items():
+            tenant_results[name] = run_query(conn, query)
+        
+        # Combine results for saving to Excel
+        all_results = {f"User_{k}": v for k, v in user_results.items()}
+        all_results.update({f"Tenant_{k}": v for k, v in tenant_results.items()})
+        
+        save_to_excel(all_results, output_file)
+        
+        # Print summary statistics to console
+        if 'OverallStats' in user_results:
+            print_summary_stats(user_results['OverallStats'])
+        
         conn.close()

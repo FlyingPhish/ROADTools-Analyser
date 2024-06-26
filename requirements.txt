@@ -1,12 +1,2 @@
-altgraph==0.17.4
-et-xmlfile==1.1.0
-numpy==1.26.2
-openpyxl==3.1.2
-packaging==23.2
-pandas==2.1.3
-pefile==2023.2.7
-python-dateutil==2.8.2
-pytz==2023.3.post1
-pywin32-ctypes==0.2.2
-six==1.16.0
-tzdata==2023.3
+pandas
+openpyxl
