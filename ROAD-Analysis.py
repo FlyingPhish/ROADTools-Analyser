@@ -107,6 +107,9 @@ def print_summary_stats(stats_df):
     """Print a summary of key statistics to the console."""
     stats = stats_df.iloc[0]  # Get the first (and only) row of the DataFrame
     
+    def safe_format(value):
+        return f"{value:.1f}%" if value is not None else "N/A"
+    
     print("\nGeneral Statistics:")
     print(f"* Total Users: {stats['Total Users']}")
     print(f"* Total Member Users: {stats['Total Member Users']}")
@@ -116,11 +119,12 @@ def print_summary_stats(stats_df):
     print(f"* Total Users w/ Disable Password Expiry: {stats['Users w/ Disable Password Expiry']}")
     
     print("\nPassword statistics for active users:")
-    print(f"* {stats['Percentage Users w/ Disable Password Expiry']:.1f}% of users have the password policy 'Disable Password Expiration' attached.")
-    print(f"* {stats['Percentage of Members Password > 90 Days']:.1f}% of member users have passwords over 90 days old.")
-    print(f"* {stats['Percentage of Guests Password > 90 Days']:.1f}% of guest users have passwords over 90 days old.")
-    print(f"* {stats['Percentage of Members w/ Unchanged Passwords From Creation']:.1f}% of members have not changed their password since creation.")
-    print(f"* {stats['Percentage of Guests w/ Unchanged Passwords From Creation']:.1f}% of guest users have not changed their password since creation.")
+    print(f"* {safe_format(stats['Percentage Users w/ Disable Password Expiry'])} of users have the password policy 'Disable Password Expiration' attached.")
+    print(f"* {safe_format(stats['Percentage of Members Password > 90 Days'])} of member users have passwords over 90 days old.")
+    print(f"* {safe_format(stats['Percentage of Guests Password > 90 Days'])} of guest users have passwords over 90 days old.")
+    print(f"* {safe_format(stats['Percentage of Members w/ Unchanged Passwords From Creation'])} of members have not changed their password since creation.")
+    print(f"* {safe_format(stats['Percentage of Guests w/ Unchanged Passwords From Creation'])} of guest users have not changed their password since creation.")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run SQLite queries and export results to Excel.")
